@@ -32,8 +32,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 
-import org.apache.maven.execution.MavenSession;
-import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.archiver.Archiver;
 
 /**
@@ -107,8 +105,9 @@ public class PomPropertiesUtil
 
     /**
      * Creates the pom.properties file.
-     * @param session {@link MavenSession}
-     * @param project {@link MavenProject}
+     * @param groupId the project groupId
+     * @param artifactId the project artifactId
+     * @param version the project version
      * @param archiver {@link Archiver}
      * @param customPomPropertiesFile optional custom pom properties file
      * @param pomPropertiesFile The pom properties file.
@@ -116,14 +115,11 @@ public class PomPropertiesUtil
      * @throws org.codehaus.plexus.archiver.ArchiverException archiver exception.
      * @throws IOException IO exception.
      */
-    public void createPomProperties( MavenSession session, MavenProject project, Archiver archiver,
-                                     File customPomPropertiesFile, File pomPropertiesFile, boolean forceCreation )
+    public void createPomProperties( String groupId, String artifactId, String version,
+                                     Archiver archiver, File customPomPropertiesFile, File pomPropertiesFile,
+                                     boolean forceCreation )
         throws IOException
     {
-        final String groupId = project.getGroupId();
-        final String artifactId = project.getArtifactId();
-        final String version = project.getVersion();
-
         Properties p;
 
         if ( customPomPropertiesFile != null )

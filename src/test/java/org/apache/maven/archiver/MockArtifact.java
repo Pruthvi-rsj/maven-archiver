@@ -19,267 +19,75 @@ package org.apache.maven.archiver;
  * under the License.
  */
 
-import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.handler.ArtifactHandler;
-import org.apache.maven.artifact.metadata.ArtifactMetadata;
-import org.apache.maven.artifact.repository.ArtifactRepository;
-import org.apache.maven.artifact.resolver.filter.ArtifactFilter;
-import org.apache.maven.artifact.versioning.ArtifactVersion;
-import org.apache.maven.artifact.versioning.OverConstrainedVersionException;
-import org.apache.maven.artifact.versioning.VersionRange;
+import javax.annotation.Nonnull;
 
-import java.io.File;
-import java.util.Collection;
-import java.util.List;
+import java.nio.file.Path;
+import java.util.Optional;
 
-/**
- * TODO move to maven-artifact-test
- */
-@SuppressWarnings( "deprecation" )
-class MockArtifact
-    implements Artifact
+import org.apache.maven.api.Artifact;
+
+public class MockArtifact implements Artifact
 {
     private String groupId;
-
     private String artifactId;
-
     private String version;
-
-    private File file;
-
-    private String scope;
-
-    private String type;
-
+    private String extension;
     private String classifier;
+    private Path path;
 
-    private String baseVersion;
-
-    private ArtifactHandler artifactHandler;
-
-    private boolean snapshot;
-
+    @Nonnull
+    @Override
     public String getGroupId()
     {
         return groupId;
     }
 
+    @Nonnull
+    @Override
     public String getArtifactId()
     {
         return artifactId;
     }
 
-    public String getVersion()
-    {
-        return version;
-    }
-
-    public void setVersion( String string )
-    {
-        this.version = string;
-    }
-
-    public void setSnapshotVersion( String snapshotVersion, String baseVersion )
-    {
-        snapshot = true;
-        version = snapshotVersion;
-        this.baseVersion = baseVersion;
-    }
-
-    public String getScope()
-    {
-        return scope;
-    }
-
-    public String getType()
-    {
-        return type;
-    }
-
+    @Nonnull
+    @Override
     public String getClassifier()
     {
         return classifier;
     }
 
-    public boolean hasClassifier()
+    @Nonnull
+    @Override
+    public String getVersion()
     {
-        return classifier != null;
+        return version;
     }
 
-    public File getFile()
+    @Nonnull
+    @Override
+    public String getExtension()
     {
-        return file;
+        return extension;
     }
 
-    public void setFile( File file )
-    {
-        this.file = file;
-    }
-
+    @Nonnull
+    @Override
     public String getBaseVersion()
     {
-        return baseVersion;
-    }
-
-    public void setBaseVersion( String string )
-    {
-        this.baseVersion = string;
-    }
-
-    public String getId()
-    {
         return null;
     }
 
-    public String getDependencyConflictId()
-    {
-        return null;
-    }
-
-    public void addMetadata( ArtifactMetadata artifactMetadata )
-    {
-    }
-
-    public ArtifactMetadata getMetadata( Class<?> metadataClass )
-    {
-        return null;
-    }
-
-    public Collection<ArtifactMetadata> getMetadataList()
-    {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setRepository( ArtifactRepository artifactRepository )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public ArtifactRepository getRepository()
-    {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void updateVersion( String string, ArtifactRepository artifactRepository )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public String getDownloadUrl()
-    {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setDownloadUrl( String string )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public ArtifactFilter getDependencyFilter()
-    {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setDependencyFilter( ArtifactFilter artifactFilter )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public ArtifactHandler getArtifactHandler()
-    {
-        return artifactHandler;
-    }
-
-    public List<String> getDependencyTrail()
-    {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setDependencyTrail( List<String> list )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public VersionRange getVersionRange()
-    {
-        return VersionRange.createFromVersion( version );
-    }
-
-    public void setVersionRange( VersionRange versionRange )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void selectVersion( String string )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
+    @Override
     public boolean isSnapshot()
     {
-        return snapshot;
+        return false;
     }
 
-    public void setResolved( boolean b )
+    @Nonnull
+    @Override
+    public Optional<Path> getPath()
     {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public boolean isResolved()
-    {
-        return false;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setResolvedVersion( String string )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setArtifactHandler( ArtifactHandler artifactHandler )
-    {
-        this.artifactHandler = artifactHandler;
-    }
-
-    public boolean isRelease()
-    {
-        return false;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setRelease( boolean b )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public List<ArtifactVersion> getAvailableVersions()
-    {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setAvailableVersions( List<ArtifactVersion> list )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public boolean isOptional()
-    {
-        return false;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public void setOptional( boolean b )
-    {
-        //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    public ArtifactVersion getSelectedVersion()
-        throws OverConstrainedVersionException
-    {
-        return VersionRange.createFromVersion( version ).getSelectedVersion( this );
-    }
-
-    public boolean isSelectedVersionKnown()
-        throws OverConstrainedVersionException
-    {
-        return VersionRange.createFromVersion( version ).isSelectedVersionKnown( this );
+        return Optional.ofNullable( path );
     }
 
     public void setGroupId( String groupId )
@@ -292,9 +100,14 @@ class MockArtifact
         this.artifactId = artifactId;
     }
 
-    public void setType( String type )
+    public void setVersion( String version )
     {
-        this.type = type;
+        this.version = version;
+    }
+
+    public void setExtension( String extension )
+    {
+        this.extension = extension;
     }
 
     public void setClassifier( String classifier )
@@ -302,13 +115,8 @@ class MockArtifact
         this.classifier = classifier;
     }
 
-    public void setScope( String string )
+    public void setPath( Path path )
     {
-         this.scope = string;
-    }
-
-    public int compareTo( Artifact o )
-    {
-        return 0;  //To change body of implemented methods use File | Settings | File Templates.
+        this.path = path;
     }
 }

@@ -19,20 +19,19 @@ package org.apache.maven.archiver;
  * under the License.
  */
 
-import org.apache.maven.artifact.Artifact;
+import org.apache.maven.api.Node;
+import org.apache.maven.api.Project;
+import org.apache.maven.api.Session;
+import org.apache.maven.api.Artifact;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.artifact.handler.ArtifactHandler;
-import org.apache.maven.artifact.handler.DefaultArtifactHandler;
-import org.apache.maven.artifact.repository.ArtifactRepository;
 import org.apache.maven.execution.DefaultMavenExecutionRequest;
 import org.apache.maven.execution.DefaultMavenExecutionResult;
 import org.apache.maven.execution.MavenExecutionRequest;
 import org.apache.maven.execution.MavenExecutionResult;
-import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Build;
 import org.apache.maven.model.Model;
 import org.apache.maven.model.Organization;
-import org.apache.maven.project.MavenProject;
 import org.apache.maven.shared.utils.StringUtils;
 import org.apache.maven.shared.utils.io.FileUtils;
 import org.codehaus.plexus.archiver.jar.JarArchiver;
@@ -46,7 +45,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
@@ -54,11 +55,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
+import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.jar.Attributes;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -66,6 +69,8 @@ import static org.junit.Assert.*;
 
 public class MavenArchiverTest
 {
+    private MockProjectManager mockProjectManager = new MockProjectManager();
+
     static class ArtifactComparator
         implements Comparator<Artifact>
     {
@@ -110,15 +115,15 @@ public class MavenArchiverTest
     {
         MavenArchiver archiver = new MavenArchiver();
 
-        MavenSession session = getDummySession();
+        Session session = getDummySession();
 
         Model model = new Model();
         model.setArtifactId( "dummy" );
 
-        MavenProject project = new MavenProject( model );
+        MockProject project = new MockProject( model );
+
         // we need to sort the artifacts for test purposes
-        Set<Artifact> artifacts = new TreeSet<>( new ArtifactComparator() );
-        project.setArtifacts( artifacts );
+        SortedSet<Node> artifacts = new TreeSet<>( Comparator.comparing( n -> n.getArtifact().getArtifactId() ) );
 
         // there should be a mock or a setter for this field.
         ManifestConfiguration config = new ManifestConfiguration()
@@ -128,6 +133,8 @@ public class MavenArchiverTest
                 return true;
             }
         };
+
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         Manifest manifest = archiver.getManifest( session, project, config );
 
@@ -139,10 +146,10 @@ public class MavenArchiverTest
         artifact1.setGroupId( "org.apache.dummy" );
         artifact1.setArtifactId( "dummy1" );
         artifact1.setVersion( "1.0" );
-        artifact1.setType( "dll" );
-        artifact1.setScope( "compile" );
+        artifact1.setExtension( "dll" );
+        artifacts.add( new MockNode( artifact1, "compile" ) );
 
-        artifacts.add( artifact1 );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         manifest = archiver.getManifest( session, project, config );
 
@@ -152,10 +159,10 @@ public class MavenArchiverTest
         artifact2.setGroupId( "org.apache.dummy" );
         artifact2.setArtifactId( "dummy2" );
         artifact2.setVersion( "1.0" );
-        artifact2.setType( "jar" );
-        artifact2.setScope( "compile" );
+        artifact2.setExtension( "jar" );
+        artifacts.add( new MockNode( artifact2, "compile" ) );
 
-        artifacts.add( artifact2 );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         manifest = archiver.getManifest( session, project, config );
 
@@ -165,10 +172,10 @@ public class MavenArchiverTest
         artifact3.setGroupId( "org.apache.dummy" );
         artifact3.setArtifactId( "dummy3" );
         artifact3.setVersion( "1.0" );
-        artifact3.setScope( "test" );
-        artifact3.setType( "jar" );
+        artifact3.setExtension( "jar" );
+        artifacts.add( new MockNode( artifact3, "test" ) );
 
-        artifacts.add( artifact3 );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         manifest = archiver.getManifest( session, project, config );
 
@@ -178,10 +185,10 @@ public class MavenArchiverTest
         artifact4.setGroupId( "org.apache.dummy" );
         artifact4.setArtifactId( "dummy4" );
         artifact4.setVersion( "1.0" );
-        artifact4.setType( "jar" );
-        artifact4.setScope( "compile" );
+        artifact4.setExtension( "jar" );
+        artifacts.add( new MockNode( artifact4, "compile" ) );
 
-        artifacts.add( artifact4 );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         manifest = archiver.getManifest( session, project, config );
 
@@ -193,23 +200,25 @@ public class MavenArchiverTest
         throws Exception
     {
         final File tempFile = File.createTempFile( "maven-archiver-test-", ".jar" );
+        MockArtifact mockArtifact = new MockArtifact();
+        mockArtifact.setGroupId( "myGroupId" );
+        mockArtifact.setArtifactId( "maven-archiver-test" );
+        mockArtifact.setVersion( "SNAPSHOT" );
+        mockArtifact.setExtension( "jar" );
+        mockArtifact.setPath( tempFile.toPath() );
 
         try
         {
             MavenArchiver archiver = new MavenArchiver();
 
-            MavenSession session = getDummySession();
+            Session session = getDummySession();
 
             Model model = new Model();
             model.setArtifactId( "dummy" );
 
-            MavenProject project = new MavenProject( model )
-            {
-                public List<String> getRuntimeClasspathElements()
-                {
-                    return Collections.singletonList( tempFile.getAbsolutePath() );
-                }
-            };
+            MockProject project = new MockProject( model );
+            mockProjectManager.setResolvedDependencies( Collections.singleton(
+                    new MockNode( mockArtifact, "compile" ) ) );
 
             // there should be a mock or a setter for this field.
             ManifestConfiguration manifestConfig = new ManifestConfiguration()
@@ -248,8 +257,8 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
 
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( false );
@@ -286,8 +295,8 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        MockProject project = getDummyProject();
 
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( true );
@@ -311,15 +320,14 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        MockProject project = getDummyProject();
 
         String ls = System.getProperty( "line.separator" );
-        project.setDescription( "foo " + ls + " bar " );
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( true );
         config.getManifest().setAddDefaultImplementationEntries( true );
-        config.addManifestEntry( "Description", project.getDescription() );
+        config.addManifestEntry( "Description", "foo " + ls + " bar " );
         archiver.createArchive( session, project, config );
         assertThat( jarFile ).exists();
 
@@ -348,13 +356,13 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
 
-        Set<Artifact> artifacts =
+        List<Node> artifacts =
             getArtifacts( getMockArtifact1(), getArtifactWithDot(), getMockArtifact2(), getMockArtifact3() );
 
-        project.setArtifacts( artifacts );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( false );
@@ -377,13 +385,13 @@ public class MavenArchiverTest
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
 
-        Set<Artifact> artifacts =
+        List<Node> artifacts =
             getArtifacts( getMockArtifact1(), getArtifactWithDot(), getMockArtifact2(), getMockArtifact3() );
 
-        project.setArtifacts( artifacts );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( false );
@@ -412,15 +420,14 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
 
         String ls = System.getProperty( "line.separator" );
-        project.setDescription( "foo " + ls + " bar " );
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( true );
         config.getManifest().setAddDefaultImplementationEntries( true );
-        config.addManifestEntry( "Description", project.getDescription() );
+        config.addManifestEntry( "Description", "foo " + ls + " bar " );
         // config.addManifestEntry( "EntryWithTab", " foo tab " + ( '\u0009' ) + ( '\u0009' ) // + " bar tab" + ( //
         // '\u0009' // ) );
         archiver.createArchive( session, project, config );
@@ -428,7 +435,6 @@ public class MavenArchiverTest
 
         final Manifest manifest = getJarFileManifest( jarFile );
         Attributes attributes = manifest.getMainAttributes();
-        assertThat( project.getDescription().indexOf( ls ) ).isGreaterThan( 0 );
         Attributes.Name description = new Attributes.Name( "Description" );
         String value = attributes.getValue( description );
         assertThat( value ).isNotNull();
@@ -444,13 +450,13 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenProject project = getDummyProject();
+        Project project = getDummyProject();
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( true );
         config.getManifest().setAddDefaultImplementationEntries( true );
         config.getManifest().setAddDefaultSpecificationEntries( true );
 
-        MavenSession session = getDummySessionWithoutMavenVersion();
+        Session session = getDummySessionWithoutMavenVersion();
         archiver.createArchive( session, project, config );
         assertThat( jarFile ).exists();
         Attributes manifest = getJarFileManifest( jarFile ).getMainAttributes();
@@ -477,8 +483,8 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( true );
         config.getManifest().setAddDefaultEntries( false );
@@ -503,8 +509,8 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
         config.setForced( true );
         config.getManifest().setAddDefaultImplementationEntries( true );
@@ -573,8 +579,8 @@ public class MavenArchiverTest
 
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
 
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
 
         Map<String, String> manifestEntries = new HashMap<>();
@@ -600,9 +606,9 @@ public class MavenArchiverTest
     {
         MavenArchiver archiver = new MavenArchiver();
 
-        MavenSession session = getDummySession();
+        Session session = getDummySession();
 
-        MavenProject project = getDummyProject();
+        Project project = getDummyProject();
         MavenArchiveConfiguration config = new MavenArchiveConfiguration();
 
         ManifestSection manifestSection = new ManifestSection();
@@ -627,8 +633,8 @@ public class MavenArchiverTest
     public void testDefaultClassPathValue()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -661,8 +667,8 @@ public class MavenArchiverTest
     public void testDefaultClassPathValue_WithSnapshot()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProjectWithSnapshot();
+        Session session = getDummySession();
+        Project project = getDummyProjectWithSnapshot();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -690,8 +696,8 @@ public class MavenArchiverTest
     public void testMavenRepoClassPathValue()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -727,8 +733,8 @@ public class MavenArchiverTest
     public void shouldCreateArchiveWithSimpleClassPathLayoutWhileSettingSimpleLayoutExplicit()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy-explicit-simple.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -762,8 +768,8 @@ public class MavenArchiverTest
     public void shouldCreateArchiveCustomerLayoutSimple()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy-custom-layout-simple.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -798,8 +804,8 @@ public class MavenArchiverTest
     public void shouldCreateArchiveCustomLayoutSimpleNonUnique()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy-custom-layout-simple-non-unique.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -834,8 +840,8 @@ public class MavenArchiverTest
     public void shouldCreateArchiveCustomLayoutRepository()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy-custom-layout-repo.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -874,8 +880,8 @@ public class MavenArchiverTest
     public void shouldCreateArchiveCustomLayoutRepositoryNonUnique()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy-custom-layout-repo-non-unique.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -914,8 +920,8 @@ public class MavenArchiverTest
     public void shouldCreateArchiveWithSimpleClassPathLayoutUsingDefaults()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy-defaults.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -947,8 +953,8 @@ public class MavenArchiverTest
     public void testMavenRepoClassPathValue_WithSnapshot()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProjectWithSnapshot();
+        Session session = getDummySession();
+        Project project = getDummyProjectWithSnapshot();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -984,8 +990,8 @@ public class MavenArchiverTest
     public void testCustomClassPathValue()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -1022,8 +1028,8 @@ public class MavenArchiverTest
     public void testCustomClassPathValue_WithSnapshotResolvedVersion()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProjectWithSnapshot();
+        Session session = getDummySession();
+        Project project = getDummyProjectWithSnapshot();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
         MavenArchiver archiver = getMavenArchiver( jarArchiver );
@@ -1059,8 +1065,8 @@ public class MavenArchiverTest
     public void testCustomClassPathValue_WithSnapshotForcingBaseVersion()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProjectWithSnapshot();
+        Session session = getDummySession();
+        Project project = getDummyProjectWithSnapshot();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -1096,8 +1102,8 @@ public class MavenArchiverTest
     public void testDefaultPomProperties()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -1133,8 +1139,8 @@ public class MavenArchiverTest
     public void testCustomPomProperties()
         throws Exception
     {
-        MavenSession session = getDummySession();
-        MavenProject project = getDummyProject();
+        Session session = getDummySession();
+        Project project = getDummyProject();
         File jarFile = new File( "target/test/dummy.jar" );
         JarArchiver jarArchiver = getCleanJarArchiver( jarFile );
 
@@ -1183,89 +1189,87 @@ public class MavenArchiverTest
     // common methods for testing
     // ----------------------------------------
 
-    private MavenProject getDummyProject()
+    private MockProject getDummyProject()
     {
-        MavenProject project = getMavenProject();
+        MockProject project = getMavenProject();
         File pomFile = new File( "src/test/resources/pom.xml" );
         pomFile.setLastModified( System.currentTimeMillis() - 60000L );
-        project.setFile( pomFile );
+        project.setPomPath( pomFile.toPath() );
         Build build = new Build();
         build.setDirectory( "target" );
         build.setOutputDirectory( "target" );
-        project.setBuild( build );
-        project.setName( "archiver test" );
-        project.setUrl( "https://maven.apache.org" );
+        project.getModel().setBuild( build );
+        project.getModel().setName( "archiver test" );
+        project.getModel().setUrl( "https://maven.apache.org" );
         Organization organization = new Organization();
         organization.setName( "Apache" );
-        project.setOrganization( organization );
+        project.getModel().setOrganization( organization );
         MockArtifact artifact = new MockArtifact();
         artifact.setGroupId( "org.apache.dummy" );
         artifact.setArtifactId( "dummy" );
         artifact.setVersion( "0.1.1" );
-        artifact.setBaseVersion( "0.1.2" );
-        artifact.setType( "jar" );
-        artifact.setArtifactHandler( new DefaultArtifactHandler( "jar" ) );
+//        artifact.setBaseVersion( "0.1.2" );
+        artifact.setExtension( "jar" );
+//        artifact.setArtifactHandler( new DefaultArtifactHandler( "jar" ) );
         project.setArtifact( artifact );
 
-        Set<Artifact> artifacts = getArtifacts( getMockArtifact1Release(), getMockArtifact2(), getMockArtifact3() );
-        project.setArtifacts( artifacts );
+        List<Node> artifacts = getArtifacts( getMockArtifact1Release(), getMockArtifact2(), getMockArtifact3() );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         return project;
     }
 
-    private MavenProject getMavenProject()
+    private MockProject getMavenProject()
     {
         Model model = new Model();
         model.setGroupId( "org.apache.dummy" );
         model.setArtifactId( "dummy" );
         model.setVersion( "0.1.1" );
 
-        final MavenProject project = new MavenProject( model );
-        project.setExtensionArtifacts( Collections.<Artifact>emptySet() );
-        project.setRemoteArtifactRepositories( Collections.<ArtifactRepository>emptyList() );
-        project.setPluginArtifactRepositories( Collections.<ArtifactRepository>emptyList() );
+        final MockProject project = new MockProject( model );
+//        project.setExtensionArtifacts( Collections.<Artifact>emptySet() );
+//        project.setRemoteArtifactRepositories( Collections.<ArtifactRepository>emptyList() );
+//        project.setPluginArtifactRepositories( Collections.<ArtifactRepository>emptyList() );
         return project;
     }
 
-    private MockArtifact getMockArtifact3()
+    private MockNode getMockArtifact3()
     {
         MockArtifact artifact3 = new MockArtifact();
         artifact3.setGroupId( "org.apache.dummy.bar" );
         artifact3.setArtifactId( "dummy3" );
         artifact3.setVersion( "2.0" );
-        artifact3.setScope( "runtime" );
-        artifact3.setType( "jar" );
-        artifact3.setFile( getClasspathFile( artifact3.getArtifactId() + "-" + artifact3.getVersion() + ".jar" ) );
-        return artifact3;
+        artifact3.setExtension( "jar" );
+        artifact3.setPath( getClasspathFile( artifact3.getArtifactId() + "-" + artifact3.getVersion() + ".jar" ) );
+        return new MockNode( artifact3, "runtime" );
     }
 
-    private MavenProject getDummyProjectWithSnapshot()
+    private Project getDummyProjectWithSnapshot()
     {
-        MavenProject project = getMavenProject();
+        MockProject project = getMavenProject();
         File pomFile = new File( "src/test/resources/pom.xml" );
         pomFile.setLastModified( System.currentTimeMillis() - 60000L );
-        project.setFile( pomFile );
+        project.setPomPath( pomFile.toPath() );
         Build build = new Build();
         build.setDirectory( "target" );
         build.setOutputDirectory( "target" );
-        project.setBuild( build );
-        project.setName( "archiver test" );
+        project.getModel().setBuild( build );
+        project.getModel().setName( "archiver test" );
         Organization organization = new Organization();
         organization.setName( "Apache" );
-        project.setOrganization( organization );
+        project.getModel().setOrganization( organization );
 
         MockArtifact artifact = new MockArtifact();
         artifact.setGroupId( "org.apache.dummy" );
         artifact.setArtifactId( "dummy" );
         artifact.setVersion( "0.1.1" );
-        artifact.setBaseVersion( "0.1.1" );
-        artifact.setType( "jar" );
-        artifact.setArtifactHandler( new DefaultArtifactHandler( "jar" ) );
+//        artifact.setBaseVersion( "0.1.1" );
+        artifact.setExtension( "jar" );
+//        artifact.setArtifactHandler( new DefaultArtifactHandler( "jar" ) );
         project.setArtifact( artifact );
 
-        Set<Artifact> artifacts = getArtifacts( getMockArtifact1(), getMockArtifact2(), getMockArtifact3() );
-
-        project.setArtifacts( artifacts );
+        List<Node> artifacts = getArtifacts( getMockArtifact1(), getMockArtifact2(), getMockArtifact3() );
+        mockProjectManager.setResolvedDependencies( artifacts );
 
         return project;
     }
@@ -1313,56 +1317,52 @@ public class MavenArchiverTest
         };
     }
 
-    private MockArtifact getMockArtifact2()
+    private MockNode getMockArtifact2()
     {
         MockArtifact artifact2 = new MockArtifact();
         artifact2.setGroupId( "org.apache.dummy.foo" );
         artifact2.setArtifactId( "dummy2" );
         artifact2.setVersion( "1.5" );
-        artifact2.setType( "jar" );
-        artifact2.setScope( "runtime" );
-        artifact2.setFile( getClasspathFile( artifact2.getArtifactId() + "-" + artifact2.getVersion() + ".jar" ) );
-        return artifact2;
+        artifact2.setExtension( "jar" );
+        artifact2.setPath( getClasspathFile( artifact2.getArtifactId() + "-" + artifact2.getVersion() + ".jar" ) );
+        return new MockNode( artifact2, "runtime" );
     }
 
-    private MockArtifact getArtifactWithDot()
+    private MockNode getArtifactWithDot()
     {
         MockArtifact artifact2 = new MockArtifact();
         artifact2.setGroupId( "org.apache.dummy.foo" );
         artifact2.setArtifactId( "dummy.dot" );
         artifact2.setVersion( "1.5" );
-        artifact2.setType( "jar" );
-        artifact2.setScope( "runtime" );
-        artifact2.setFile( getClasspathFile( artifact2.getArtifactId() + "-" + artifact2.getVersion() + ".jar" ) );
-        return artifact2;
+        artifact2.setExtension( "jar" );
+        artifact2.setPath( getClasspathFile( artifact2.getArtifactId() + "-" + artifact2.getVersion() + ".jar" ) );
+        return new MockNode( artifact2, "runtime" );
     }
 
-    private MockArtifact getMockArtifact1()
+    private MockNode getMockArtifact1()
     {
         MockArtifact artifact1 = new MockArtifact();
         artifact1.setGroupId( "org.apache.dummy" );
         artifact1.setArtifactId( "dummy1" );
-        artifact1.setSnapshotVersion( "1.1-20081022.112233-1", "1.1-SNAPSHOT" );
-        artifact1.setType( "jar" );
-        artifact1.setScope( "runtime" );
-        artifact1.setFile( getClasspathFile( artifact1.getArtifactId() + "-" + artifact1.getVersion() + ".jar" ) );
-        return artifact1;
+//        artifact1.setSnapshotVersion( "1.1-20081022.112233-1", "1.1-SNAPSHOT" );
+        artifact1.setExtension( "jar" );
+        artifact1.setPath( getClasspathFile( artifact1.getArtifactId() + "-" + artifact1.getVersion() + ".jar" ) );
+        return new MockNode( artifact1, "runtime" );
     }
 
-    private MockArtifact getMockArtifact1Release()
+    private MockNode getMockArtifact1Release()
     {
         MockArtifact artifact1 = new MockArtifact();
         artifact1.setGroupId( "org.apache.dummy" );
         artifact1.setArtifactId( "dummy1" );
         artifact1.setVersion( "1.0" );
-        artifact1.setBaseVersion( "1.0.1" );
-        artifact1.setType( "jar" );
-        artifact1.setScope( "runtime" );
-        artifact1.setFile( getClasspathFile( artifact1.getArtifactId() + "-" + artifact1.getVersion() + ".jar" ) );
-        return artifact1;
+//        artifact1.setBaseVersion( "1.0.1" );
+        artifact1.setExtension( "jar" );
+        artifact1.setPath( getClasspathFile( artifact1.getArtifactId() + "-" + artifact1.getVersion() + ".jar" ) );
+        return new MockNode( artifact1, "runtime" );
     }
 
-    private File getClasspathFile( String file )
+    private Path getClasspathFile( String file )
     {
         URL resource = Thread.currentThread().getContextClassLoader().getResource( file );
         if ( resource == null )
@@ -1372,10 +1372,10 @@ public class MavenArchiverTest
 
         URI uri = new File( resource.getPath() ).toURI().normalize();
 
-        return new File( uri.getPath().replaceAll( "%20", " " ) );
+        return new File( uri.getPath().replaceAll( "%20", " " ) ).toPath();
     }
 
-    private MavenSession getDummySession()
+    private Session getDummySession()
     {
         Properties systemProperties = new Properties();
         systemProperties.put( "maven.version", "3.1.1" );
@@ -1385,12 +1385,12 @@ public class MavenArchiverTest
         return getDummySession( systemProperties );
     }
 
-    private MavenSession getDummySessionWithoutMavenVersion()
+    private Session getDummySessionWithoutMavenVersion()
     {
         return getDummySession( new Properties() );
     }
 
-    private MavenSession getDummySession( Properties systemProperties )
+    private Session getDummySession( Properties systemProperties )
     {
         File settings = null;
         List<String> goals = null;
@@ -1406,20 +1406,18 @@ public class MavenArchiverTest
 
         RepositorySystemSession rss = new DefaultRepositorySystemSession();
 
-        return new MavenSession( null, rss, request, result );
-
+        MockSession session = new MockSession();
+        session.setProjectManager( mockProjectManager );
+        session.setSystemProperties( systemProperties );
+        return session;
+//        return new MavenSession( null, rss, request, result );
     }
 
-    private Set<Artifact> getArtifacts( Artifact... artifacts )
+    private List<Node> getArtifacts( Node... artifacts )
     {
-        final ArtifactHandler mockArtifactHandler = getMockArtifactHandler();
-        Set<Artifact> result = new TreeSet<>( new ArtifactComparator() );
-        for ( Artifact artifact : artifacts )
-        {
-            artifact.setArtifactHandler( mockArtifactHandler );
-            result.add( artifact );
-        }
-        return result;
+        return Stream.of( artifacts )
+                .sorted( Comparator.comparing( n -> n.getArtifact().getArtifactId() ) )
+                .collect( Collectors.toList() );
     }
 
     public Manifest getJarFileManifest( File jarFile )
@@ -1497,4 +1495,5 @@ public class MavenArchiverTest
         {
         }
     }
+
 }

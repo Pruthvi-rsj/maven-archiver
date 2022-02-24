@@ -19,12 +19,14 @@ package org.apache.maven.archiver;
  * under the License.
  */
 
-import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.DependencyResolutionRequiredException;
+import org.apache.maven.api.Artifact;
+import org.apache.maven.api.Node;
+import org.apache.maven.api.Project;
+import org.apache.maven.api.plugin.annotations.ResolutionScope;
+import org.apache.maven.api.Session;
+import org.apache.maven.api.services.ProjectManager;
 import org.apache.maven.artifact.versioning.ArtifactVersion;
-import org.apache.maven.artifact.versioning.OverConstrainedVersionException;
-import org.apache.maven.execution.MavenSession;
-import org.apache.maven.project.MavenProject;
+import org.apache.maven.artifact.versioning.VersionRange;
 import org.codehaus.plexus.archiver.jar.JarArchiver;
 import org.codehaus.plexus.archiver.jar.Manifest;
 import org.codehaus.plexus.archiver.jar.ManifestException;
@@ -50,9 +52,10 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
-import java.util.Set;
 import java.util.jar.Attributes;
+import java.util.stream.Collectors;
 
 import static org.apache.maven.archiver.ManifestConfiguration.CLASSPATH_LAYOUT_TYPE_CUSTOM;
 import static org.apache.maven.archiver.ManifestConfiguration.CLASSPATH_LAYOUT_TYPE_REPOSITORY;
@@ -122,10 +125,9 @@ public class MavenArchiver
      * @param config the MavenArchiveConfiguration
      * @return the {@link Manifest}
      * @throws ManifestException in case of a failure
-     * @throws DependencyResolutionRequiredException resolution failure
      */
-    public Manifest getManifest( MavenSession session, MavenProject project, MavenArchiveConfiguration config )
-        throws ManifestException, DependencyResolutionRequiredException
+    public Manifest getManifest( Session session, Project project, MavenArchiveConfiguration config )
+        throws ManifestException
     {
         boolean hasManifestEntries = !config.isManifestEntriesEmpty();
         Map<String, String> entries =
@@ -187,31 +189,29 @@ public class MavenArchiver
     /**
      * Return a pre-configured manifest.
      *
-     * @param project {@link MavenProject}
+     * @param project {@link Project}
      * @param config {@link ManifestConfiguration}
      * @return {@link Manifest}
      * @throws ManifestException Manifest exception.
-     * @throws DependencyResolutionRequiredException Dependency resolution exception.
      */
     // TODO Add user attributes list and user groups list
-    public Manifest getManifest( MavenProject project, ManifestConfiguration config )
-        throws ManifestException, DependencyResolutionRequiredException
+    public Manifest getManifest( Project project, ManifestConfiguration config )
+        throws ManifestException
     {
-        return getManifest( null, project, config, Collections.<String, String>emptyMap() );
+        return getManifest( null, project, config, Collections.emptyMap() );
     }
 
     /**
-     * @param mavenSession {@link MavenSession}
-     * @param project {@link MavenProject}
+     * @param Session {@link Session}
+     * @param project {@link Project}
      * @param config {@link ManifestConfiguration}
      * @return {@link Manifest}
      * @throws ManifestException the manifest exception
-     * @throws DependencyResolutionRequiredException the dependency resolution required exception
      */
-    public Manifest getManifest( MavenSession mavenSession, MavenProject project, ManifestConfiguration config )
-        throws ManifestException, DependencyResolutionRequiredException
+    public Manifest getManifest( Session session, Project project, ManifestConfiguration config )
+        throws ManifestException
     {
-        return getManifest( mavenSession, project, config, Collections.<String, String>emptyMap() );
+        return getManifest( session, project, config, Collections.emptyMap() );
     }
 
     private void addManifestAttribute( Manifest manifest, Map<String, String> map, String key, String value )
@@ -242,17 +242,16 @@ public class MavenArchiver
     }
 
     /**
-     * @param session {@link MavenSession}
-     * @param project {@link MavenProject}
+     * @param session {@link Session}
+     * @param project {@link Project}
      * @param config {@link ManifestConfiguration}
      * @param entries The entries.
      * @return {@link Manifest}
      * @throws ManifestException the manifest exception
-     * @throws DependencyResolutionRequiredException the dependency resolution required exception
      */
-    protected Manifest getManifest( MavenSession session, MavenProject project, ManifestConfiguration config,
+    protected Manifest getManifest( Session session, Project project, ManifestConfiguration config,
                                     Map<String, String> entries )
-                                        throws ManifestException, DependencyResolutionRequiredException
+                                        throws ManifestException
     {
         // TODO: Should we replace "map" with a copy? Note, that we modify it!
 
@@ -273,108 +272,103 @@ public class MavenArchiver
         {
             StringBuilder classpath = new StringBuilder();
 
-            List<String> artifacts = project.getRuntimeClasspathElements();
+            List<Artifact> artifacts = session.getService( ProjectManager.class )
+                    .getResolvedDependencies( project, ProjectManager.ResolutionScope.CompileRuntime );
             String classpathPrefix = config.getClasspathPrefix();
             String layoutType = config.getClasspathLayoutType();
             String layout = config.getCustomClasspathLayout();
 
             Interpolator interpolator = new StringSearchInterpolator();
 
-            for ( String artifactFile : artifacts )
+            for ( Artifact artifact : artifacts )
             {
-                File f = new File( artifactFile );
-                if ( f.getAbsoluteFile().isFile() )
+                if ( classpath.length() > 0 )
                 {
-                    Artifact artifact = findArtifactWithFile( project.getArtifacts(), f );
+                    classpath.append( " " );
+                }
+                classpath.append( classpathPrefix );
 
-                    if ( classpath.length() > 0 )
+                // NOTE: If the artifact or layout type (from config) is null, give up and use the file name by
+                // itself.
+                if ( layoutType == null )
+                {
+                    classpath.append( artifact.getPath().get().getFileName().toString() );
+                }
+                else
+                {
+                    List<ValueSource> valueSources = new ArrayList<>();
+
+                    handleExtraExpression( artifact, valueSources );
+
+                    for ( ValueSource vs : valueSources )
                     {
-                        classpath.append( " " );
+                        interpolator.addValueSource( vs );
                     }
-                    classpath.append( classpathPrefix );
 
-                    // NOTE: If the artifact or layout type (from config) is null, give up and use the file name by
-                    // itself.
-                    if ( artifact == null || layoutType == null )
+                    RecursionInterceptor recursionInterceptor =
+                        new PrefixAwareRecursionInterceptor( ARTIFACT_EXPRESSION_PREFIXES );
+
+                    try
                     {
-                        classpath.append( f.getName() );
+                        switch ( layoutType )
+                        {
+                            case CLASSPATH_LAYOUT_TYPE_SIMPLE:
+                                if ( config.isUseUniqueVersions() )
+                                {
+                                    classpath.append( interpolator.interpolate( SIMPLE_LAYOUT,
+                                            recursionInterceptor ) );
+                                }
+                                else
+                                {
+                                    classpath.append( interpolator.interpolate( SIMPLE_LAYOUT_NONUNIQUE,
+                                            recursionInterceptor ) );
+                                }
+                                break;
+                            case CLASSPATH_LAYOUT_TYPE_REPOSITORY:
+                                // we use layout /$groupId[0]/../${groupId[n]/$artifactId/$version/{fileName}
+                                // here we must find the Artifact in the project Artifacts
+                                // to create the maven layout
+                                if ( config.isUseUniqueVersions() )
+                                {
+                                    classpath.append( interpolator.interpolate( REPOSITORY_LAYOUT,
+                                            recursionInterceptor ) );
+                                }
+                                else
+                                {
+                                    classpath.append( interpolator.interpolate( REPOSITORY_LAYOUT_NONUNIQUE,
+                                            recursionInterceptor ) );
+                                }
+                                break;
+                            case CLASSPATH_LAYOUT_TYPE_CUSTOM:
+                                if ( layout == null )
+                                {
+                                    throw new ManifestException( CLASSPATH_LAYOUT_TYPE_CUSTOM
+                                            + " layout type was declared, but custom layout expression was not"
+                                            + " specified. Check your <archive><manifest><customLayout/>"
+                                            + " element." );
+                                }
+
+                                classpath.append( interpolator.interpolate( layout, recursionInterceptor ) );
+                                break;
+                            default:
+                                throw new ManifestException( "Unknown classpath layout type: '" + layoutType
+                                        + "'. Check your <archive><manifest><layoutType/> element." );
+                        }
                     }
-                    else
+                    catch ( InterpolationException e )
                     {
-                        List<ValueSource> valueSources = new ArrayList<>();
+                        ManifestException error =
+                            new ManifestException( "Error interpolating artifact path for classpath entry: "
+                                + e.getMessage() );
 
-                        handleExtraExpression( artifact, valueSources );
-
+                        error.initCause( e );
+                        throw error;
+                    }
+                    finally
+                    {
                         for ( ValueSource vs : valueSources )
                         {
-                            interpolator.addValueSource( vs );
-                        }
-
-                        RecursionInterceptor recursionInterceptor =
-                            new PrefixAwareRecursionInterceptor( ARTIFACT_EXPRESSION_PREFIXES );
-
-                        try
-                        {
-                            switch ( layoutType )
-                            {
-                                case CLASSPATH_LAYOUT_TYPE_SIMPLE:
-                                    if ( config.isUseUniqueVersions() )
-                                    {
-                                        classpath.append( interpolator.interpolate( SIMPLE_LAYOUT,
-                                                recursionInterceptor ) );
-                                    }
-                                    else
-                                    {
-                                        classpath.append( interpolator.interpolate( SIMPLE_LAYOUT_NONUNIQUE,
-                                                recursionInterceptor ) );
-                                    }
-                                    break;
-                                case CLASSPATH_LAYOUT_TYPE_REPOSITORY:
-                                    // we use layout /$groupId[0]/../${groupId[n]/$artifactId/$version/{fileName}
-                                    // here we must find the Artifact in the project Artifacts
-                                    // to create the maven layout
-                                    if ( config.isUseUniqueVersions() )
-                                    {
-                                        classpath.append( interpolator.interpolate( REPOSITORY_LAYOUT,
-                                                recursionInterceptor ) );
-                                    }
-                                    else
-                                    {
-                                        classpath.append( interpolator.interpolate( REPOSITORY_LAYOUT_NONUNIQUE,
-                                                recursionInterceptor ) );
-                                    }
-                                    break;
-                                case CLASSPATH_LAYOUT_TYPE_CUSTOM:
-                                    if ( layout == null )
-                                    {
-                                        throw new ManifestException( CLASSPATH_LAYOUT_TYPE_CUSTOM
-                                                + " layout type was declared, but custom layout expression was not"
-                                                + " specified. Check your <archive><manifest><customLayout/>"
-                                                + " element." );
-                                    }
-
-                                    classpath.append( interpolator.interpolate( layout, recursionInterceptor ) );
-                                    break;
-                                default:
-                                    throw new ManifestException( "Unknown classpath layout type: '" + layoutType
-                                            + "'. Check your <archive><manifest><layoutType/> element." );
-                            }
-                        }
-                        catch ( InterpolationException e )
-                        {
-                            ManifestException error =
-                                new ManifestException( "Error interpolating artifact path for classpath entry: "
-                                    + e.getMessage() );
-
-                            error.initCause( e );
-                            throw error;
-                        }
-                        finally
-                        {
-                            for ( ValueSource vs : valueSources )
-                            {
-                                interpolator.removeValuesSource( vs );
-                            }
+                            interpolator.removeValuesSource( vs );
                         }
                     }
                 }
@@ -406,7 +400,7 @@ public class MavenArchiver
 
         if ( config.isAddExtensions() )
         {
-            handleExtensions( project, entries, m );
+            handleExtensions( session, project, entries, m );
         }
 
         addCustomEntries( m, entries, config );
@@ -418,8 +412,8 @@ public class MavenArchiver
     {
         valueSources.add( new PrefixedObjectValueSource( ARTIFACT_EXPRESSION_PREFIXES, artifact,
                                                          true ) );
-        valueSources.add( new PrefixedObjectValueSource( ARTIFACT_EXPRESSION_PREFIXES,
-                                                         artifact.getArtifactHandler(), true ) );
+        //valueSources.add( new PrefixedObjectValueSource( ARTIFACT_EXPRESSION_PREFIXES,
+        //                                                 artifact.getArtifactHandler(), true ) );
 
         Properties extraExpressions = new Properties();
         // FIXME: This query method SHOULD NOT affect the internal
@@ -444,88 +438,75 @@ public class MavenArchiver
                                                              extraExpressions, true ) );
     }
 
-    private void handleExtensions( MavenProject project, Map<String, String> entries, Manifest m )
+    private void handleExtensions( Session session, Project project, Map<String, String> entries, Manifest m )
         throws ManifestException
     {
         // TODO: this is only for applets - should we distinguish them as a packaging?
-        StringBuilder extensionsList = new StringBuilder();
-        Set<Artifact> artifacts = project.getArtifacts();
+        Node root = session.getService( ProjectManager.class )
+                .getCollectedDependencies( project, ProjectManager.ResolutionScope.Test );
 
-        for ( Artifact artifact : artifacts )
+        List<Node> extensions = root.stream()
+                .filter( n -> !Objects.equals( n.getDependency().getScope(), ResolutionScope.TEST.id() ) )
+                .filter( n -> "jar".equals( n.getArtifact().getExtension() ) )
+                .collect( Collectors.toList() );
+
+
+        if ( !extensions.isEmpty() )
         {
-            if ( !Artifact.SCOPE_TEST.equals( artifact.getScope() ) )
+            String list = extensions.stream()
+                    .map( n -> n.getArtifact().getArtifactId() )
+                    .collect( Collectors.joining( " " ) );
+            addManifestAttribute( m, entries, "Extension-List", list );
+
+            for ( Node extension : extensions )
             {
-                if ( "jar".equals( artifact.getType() ) )
-                {
-                    if ( extensionsList.length() > 0 )
-                    {
-                        extensionsList.append( " " );
-                    }
-                    extensionsList.append( artifact.getArtifactId() );
-                }
-            }
-        }
-
-        if ( extensionsList.length() > 0 )
-        {
-            addManifestAttribute( m, entries, "Extension-List", extensionsList.toString() );
-        }
-
-        for ( Object artifact1 : artifacts )
-        {
-            // TODO: the correct solution here would be to have an extension type, and to read
-            // the real extension values either from the artifact's manifest or some part of the POM
-            Artifact artifact = (Artifact) artifact1;
-            if ( "jar".equals( artifact.getType() ) )
-            {
+                Artifact artifact = extension.getArtifact();
                 String artifactId = artifact.getArtifactId().replace( '.', '_' );
                 String ename = artifactId + "-Extension-Name";
                 addManifestAttribute( m, entries, ename, artifact.getArtifactId() );
                 String iname = artifactId + "-Implementation-Version";
                 addManifestAttribute( m, entries, iname, artifact.getVersion() );
 
-                if ( artifact.getRepository() != null )
+                if ( extension.getRepository().isPresent() )
                 {
                     iname = artifactId + "-Implementation-URL";
-                    String url = artifact.getRepository().getUrl() + "/" + artifact.toString();
+                    String url = extension.getRepository().get().getUrl() + "/" + artifact;
                     addManifestAttribute( m, entries, iname, url );
                 }
             }
         }
     }
 
-    private void handleImplementationEntries( MavenProject project, Map<String, String> entries, Manifest m )
+    private void handleImplementationEntries( Project project, Map<String, String> entries, Manifest m )
         throws ManifestException
     {
-        addManifestAttribute( m, entries, "Implementation-Title", project.getName() );
+        addManifestAttribute( m, entries, "Implementation-Title", project.getModel().getName() );
         addManifestAttribute( m, entries, "Implementation-Version", project.getVersion() );
 
-        if ( project.getOrganization() != null )
+        if ( project.getModel().getOrganization() != null )
         {
-            addManifestAttribute( m, entries, "Implementation-Vendor", project.getOrganization().getName() );
+            addManifestAttribute( m, entries, "Implementation-Vendor", project.getModel().getOrganization().getName() );
         }
     }
 
-    private void handleSpecificationEntries( MavenProject project, Map<String, String> entries, Manifest m )
+    private void handleSpecificationEntries( Project project, Map<String, String> entries, Manifest m )
         throws ManifestException
     {
-        addManifestAttribute( m, entries, "Specification-Title", project.getName() );
+        addManifestAttribute( m, entries, "Specification-Title", project.getModel().getName() );
 
-        try
-        {
-            ArtifactVersion version = project.getArtifact().getSelectedVersion();
-            String specVersion = String.format( "%s.%s", version.getMajorVersion(), version.getMinorVersion() );
-            addManifestAttribute( m, entries, "Specification-Version", specVersion );
-        }
-        catch ( OverConstrainedVersionException e )
+        ArtifactVersion version = VersionRange.createFromVersion( project.getArtifact().getVersion() )
+                .getRecommendedVersion();
+        if ( version == null )
         {
             throw new ManifestException( "Failed to get selected artifact version to calculate"
-                + " the specification version: " + e.getMessage() );
+                    + " the specification version: " + project.getArtifact().getVersion() );
         }
+        String specVersion = String.format( "%s.%s", version.getMajorVersion(), version.getMinorVersion() );
+        addManifestAttribute( m, entries, "Specification-Version", specVersion );
 
-        if ( project.getOrganization() != null )
+        if ( project.getModel().getOrganization() != null )
         {
-            addManifestAttribute( m, entries, "Specification-Vendor", project.getOrganization().getName() );
+            addManifestAttribute( m, entries, "Specification-Vendor", project.getModel().getOrganization().getName() );
         }
     }
 
@@ -568,23 +549,17 @@ public class MavenArchiver
     }
 
     /**
-     * @param session {@link MavenSession}
-     * @param project {@link MavenProject}
+     * @param session {@link Session}
+     * @param project {@link Project}
      * @param archiveConfiguration {@link MavenArchiveConfiguration}
      * @throws org.codehaus.plexus.archiver.ArchiverException Archiver Exception.
      * @throws ManifestException Manifest Exception.
      * @throws IOException IO Exception.
-     * @throws DependencyResolutionRequiredException Dependency resolution exception.
      */
-    public void createArchive( MavenSession session, MavenProject project,
+    public void createArchive( Session session, Project project,
                                MavenArchiveConfiguration archiveConfiguration )
-                                   throws ManifestException, IOException,
-                                   DependencyResolutionRequiredException
+                                   throws ManifestException, IOException
     {
-        // we have to clone the project instance so we can write out the pom with the deployment version,
-        // without impacting the main project instance...
-        MavenProject workingProject = project.clone();
-
         boolean forced = archiveConfiguration.isForced();
         if ( archiveConfiguration.isAddMavenDescriptor() )
         {
@@ -599,27 +574,23 @@ public class MavenArchiver
             // POM information without the use of maven tools can do so.
             // ----------------------------------------------------------------------
 
-            if ( workingProject.getArtifact().isSnapshot() )
-            {
-                workingProject.setVersion( workingProject.getArtifact().getVersion() );
-            }
+            String groupId = project.getGroupId();
 
-            String groupId = workingProject.getGroupId();
+            String artifactId = project.getArtifactId();
 
-            String artifactId = workingProject.getArtifactId();
-
-            archiver.addFile( project.getFile(), "META-INF/maven/" + groupId + "/" + artifactId + "/pom.xml" );
+            archiver.addFile( project.getPomPath().toFile(), "META-INF/maven/"
+                    + groupId + "/" + artifactId + "/pom.xml" );
 
             // ----------------------------------------------------------------------
             // Create pom.properties file
             // ----------------------------------------------------------------------
 
             File customPomPropertiesFile = archiveConfiguration.getPomPropertiesFile();
-            File dir = new File( workingProject.getBuild().getDirectory(), "maven-archiver" );
+            File dir = new File( project.getModel().getBuild().getDirectory(), "maven-archiver" );
             File pomPropertiesFile = new File( dir, "pom.properties" );
 
-            new PomPropertiesUtil().createPomProperties( session, workingProject, archiver,
-                customPomPropertiesFile, pomPropertiesFile, forced );
+            new PomPropertiesUtil().createPomProperties( groupId, artifactId, project.getArtifact().getVersion(),
+                    archiver, customPomPropertiesFile, pomPropertiesFile, forced );
         }
 
         // ----------------------------------------------------------------------
@@ -635,7 +606,7 @@ public class MavenArchiver
             archiver.setManifest( manifestFile );
         }
 
-        Manifest manifest = getManifest( session, workingProject, archiveConfiguration );
+        Manifest manifest = getManifest( session, project, archiveConfiguration );
 
         // Configure the jar
         archiver.addConfiguredManifest( manifest );
@@ -651,11 +622,12 @@ public class MavenArchiver
         // make the archiver index the jars on the classpath, if we are adding that to the manifest
         if ( archiveConfiguration.getManifest().isAddClasspath() )
         {
-            List<String> artifacts = project.getRuntimeClasspathElements();
-            for ( String artifact : artifacts )
+
+            List<Artifact> artifacts = session.getService( ProjectManager.class )
+                    .getResolvedDependencies( project, ProjectManager.ResolutionScope.Runtime );
+            for ( Artifact artifact : artifacts )
             {
-                File f = new File( artifact );
-                archiver.addConfiguredIndexJars( f );
+                archiver.addConfiguredIndexJars( artifact.getPath().get().toFile() );
             }
         }
 
@@ -695,7 +667,7 @@ public class MavenArchiver
          }
     }
 
-    private void handleBuildEnvironmentEntries( MavenSession session, Manifest m, Map<String, String> entries )
+    private void handleBuildEnvironmentEntries( Session session, Manifest m, Map<String, String> entries )
         throws ManifestException
     {
         addManifestAttribute( m, entries, "Build-Tool",
@@ -704,22 +676,6 @@ public class MavenArchiver
             System.getProperty( "java.vendor" ) ) );
         addManifestAttribute( m, entries, "Build-Os", String.format( "%s (%s; %s)", System.getProperty( "os.name" ),
             System.getProperty( "os.version" ), System.getProperty( "os.arch" ) ) );
-    }
-
-    private Artifact findArtifactWithFile( Set<Artifact> artifacts, File file )
-    {
-        for ( Artifact artifact : artifacts )
-        {
-            // normally not null but we can check
-            if ( artifact.getFile() != null )
-            {
-                if ( artifact.getFile().equals( file ) )
-                {
-                    return artifact;
-                }
-            }
-        }
-        return null;
     }
 
     private static String getCreatedByVersion( String groupId, String artifactId )
