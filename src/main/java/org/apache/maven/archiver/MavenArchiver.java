@@ -446,6 +446,7 @@ public class MavenArchiver
                 .getCollectedDependencies( project, ProjectManager.ResolutionScope.Test );
 
         List<Node> extensions = root.stream()
+                .filter( n -> n != root )
                 .filter( n -> !Objects.equals( n.getDependency().getScope(), ResolutionScope.TEST.id() ) )
                 .filter( n -> "jar".equals( n.getArtifact().getExtension() ) )
                 .collect( Collectors.toList() );
@@ -499,7 +500,7 @@ public class MavenArchiver
         if ( version == null )
         {
             throw new ManifestException( "Failed to get selected artifact version to calculate"
-                    + " the specification version: " + project.getArtifact().getVersion() );
+                + " the specification version: " + project.getArtifact().getVersion() );
         }
         String specVersion = String.format( "%s.%s", version.getMajorVersion(), version.getMinorVersion() );
         addManifestAttribute( m, entries, "Specification-Version", specVersion );

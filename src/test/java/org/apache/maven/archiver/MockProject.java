@@ -109,6 +109,12 @@ class MockProject implements Project
         return null;
     }
 
+    @Override
+    public boolean isExecutionRoot()
+    {
+        return false;
+    }
+
     public void setPomPath( Path pomPath )
     {
         this.pomPath = pomPath;

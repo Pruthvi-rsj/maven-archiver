@@ -31,9 +31,11 @@ public class MockArtifact implements Artifact
     private String groupId;
     private String artifactId;
     private String version;
+    private String baseVersion;
     private String extension;
     private String classifier;
     private Path path;
+    private boolean snapshot;
 
     @Nonnull
     @Override
@@ -74,13 +76,17 @@ public class MockArtifact implements Artifact
     @Override
     public String getBaseVersion()
     {
-        return null;
+        if ( baseVersion == null && version != null )
+        {
+            baseVersion = version;
+        }
+        return baseVersion;
     }
 
     @Override
     public boolean isSnapshot()
     {
-        return false;
+        return snapshot;
     }
 
     @Nonnull
@@ -103,6 +109,18 @@ public class MockArtifact implements Artifact
     public void setVersion( String version )
     {
         this.version = version;
+    }
+
+    public void setBaseVersion( String baseVersion )
+    {
+        this.baseVersion = baseVersion;
+    }
+
+    public void setSnapshotVersion( String version, String baseVersion )
+    {
+        this.snapshot = true;
+        this.version = version;
+        this.baseVersion = baseVersion;
     }
 
     public void setExtension( String extension )
