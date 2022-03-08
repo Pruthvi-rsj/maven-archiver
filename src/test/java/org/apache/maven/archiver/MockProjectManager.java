@@ -52,7 +52,7 @@ public class MockProjectManager implements ProjectManager
     }
 
     @Override
-    public void attachArtifact( Project project, String type, String classifier, Path path )
+    public void attachArtifact( Project project, Artifact artifact, Path path )
     {
 
     }
